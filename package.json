@@ -1,0 +1,20 @@
+{
+  "name": "websocket_test",
+  "version": "1.0.0",
+  "description": "my websocket test",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "type": "module",
+  "author": "me",
+  "license": "ISC",
+  "dependencies": {
+    "fs": "^0.0.1-security",
+    "http": "^0.0.1-security",
+    "path": "^0.12.7",
+    "url": "^0.11.4",
+    "ws": "^8.18.3"
+  }
+}
