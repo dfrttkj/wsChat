@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat room</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f0f0f0;
+        }
+    
+        .table-container {
+            max-height: 200px;
+            overflow: auto;
+            border: 1px solid #ccc;
+            margin-bottom: 20px;
+            background: white;
+        }
+    
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+    
+        th,
+        td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: left;
+        }
+    
+        th {
+            background: #ddd;
+        }
+    
+        #messages {
+            height: 150px;
+            overflow: auto;
+            border: 1px solid #ccc;
+            margin-bottom: 10px;
+            padding: 10px;
+            background: white;
+        }
+    
+        #send {
+            padding: 8px 15px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+    
+        @media (max-width: 600px) {
+            body {
+                margin: 10px;
+            }
+    
+            th,
+            td {
+                padding: 6px;
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Login / Signup</h1>
+
+    <input type="text" id="username" placeholder="username">
+    <input type="password" id="password" placeholder="password">
+    <button id="login">Login</button>
+    <button id="signup">Sign up</button>
+    <button id="logout" disabled>Logout</button>
+
+    <hr>
+
+    <h1>Chat room</h1>
+
+    <div id="messages">
+    </div>
+
+    <input type="text" id="messageInput" placeholder="Type message...">
+    <button id="send">Send</button>
+
+    <script>
+        let user = null;
+        const wsUrl = `ws://${window.location.host}/chat`;
+        const socket = new WebSocket(wsUrl);
+        const messages = document.getElementById('messages');
+
+
+        socket.onopen = () => {
+            console.log("connected!");
+        };
+
+        socket.onmessage = (msg) => {
+            const data = JSON.parse(msg.data);
+
+            console.log(data.type);           
+            switch (data['type']) {
+                case 'error':
+                    alert(data.message);
+                    break;
+
+                case 'auth':
+                    if (data.success) {
+                        setLoggedInState(data.username);
+                    }
+                    break;
+
+                case 'message':
+                    addMessage(data.message, data.username);
+                    break;
+
+                default:
+                    alert(`what the fuck type: ${data.type}`);
+                    console.log(data);
+                    
+            }
+        };
+
+
+        document.getElementById('login').onclick = () => {
+            authRequest('login');
+        };
+
+        document.getElementById('signup').onclick = () => {
+            authRequest('signup');
+        };
+
+        document.getElementById('send').addEventListener('click', () => {
+            if (user == null) return;
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+
+            if (message) {
+                addMessage(message);
+                sendMessage(message);
+
+                // Clear input
+                input.value = '';
+            }
+        });
+
+        document.getElementById('messageInput').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') {
+                document.getElementById('send').click();
+            }
+        });
+
+        document.getElementById('logout').addEventListener('click', () => {
+            if (user === null) return;
+
+            socket.send(JSON.stringify({
+                type: 'logout',
+                username: user
+            }));
+
+            setLoggedOutState();
+        });
+
+
+        function authRequest(type) {
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value.trim();
+            socket.send(JSON.stringify({ type, username, password }));
+        }
+
+        function setLoggedInState(username) {
+            user = username;
+            document.getElementById("login").disabled = true;
+            document.getElementById("signup").disabled = true;
+            document.getElementById("logout").disabled = false;
+            console.log("Logged in as:", user);
+        }
+
+        function setLoggedOutState() {
+            user = null;
+            document.getElementById("login").disabled = false;
+            document.getElementById("signup").disabled = false;
+            document.getElementById("logout").disabled = true;
+            console.log("Logged out");
+        }
+
+        function addMessage(message, sender = user) {
+            const messagesDiv = document.getElementById('messages');
+            const newMessage = document.createElement('div');
+
+            newMessage.textContent = `${sender}: ${message}`;
+            messagesDiv.appendChild(newMessage);
+
+            // Scroll to bottom
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+        }
+
+        function sendMessage(message) {
+            socket.send(JSON.stringify({
+                'type': 'message',
+                'username': user,
+                'message': message
+            }));
+        }
+    </script>
+</body>
+</html>

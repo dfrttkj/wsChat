@@ -1,181 +1,158 @@
-import { WebSocket, WebSocketServer } from "ws"
-import http from 'http';
+import { WebSocketServer } from "ws"
+import { createServer } from 'http';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
+
+const __filename = "wsChatNew";
 const __dirname = path.dirname(__filename);
+
+const usersFile = path.join(__dirname, 'users.json');
 
 const HOSTNAME = '0.0.0.0';
 const PORT = 8080;
 
-const public_files = fs.readdirSync(path.join(__dirname, '/public/'));
+// ####################################################################################################
 
-// Create HTTP server
-const server = http.createServer((req, res) => {
-    let filePath = req.url === '/' ? '/index.html' : req.url;
-
-    // Security measure - block path traversal attempts
-    filePath = public_files.includes(req.url.slice(1, req.url.length)) ? filePath : '/index.html';
-    filePath = path.join(__dirname, 'public', filePath);
-
-    // Set proper Content-Type based on file extension
-    const extname = path.extname(filePath);
-    const contentTypes = {
-        '.html': 'text/html',
-        '.js': 'text/javascript',
-        '.css': 'text/css',
-        '.json': 'application/json',
-        '.png': 'image/png',
-        '.jpg': 'image/jpg',
-        '.gif': 'image/gif',
-        '.svg': 'image/svg+xml'
-    };
-
-    const contentType = contentTypes[extname] || 'text/plain';
-
-    fs.readFile(filePath, (err, content) => {
-        if (err) {
-            if (err.code === 'ENOENT') {
-                res.writeHead(404);
-                res.end('File not found');
-            } else {
-                res.writeHead(500);
-                res.end('Server error');
-            }
-        } else {
-            res.writeHead(200, { 'Content-Type': contentType });
-            res.end(content, 'utf-8');
-        }
-    });
+const server = createServer((req, res) => {
+    if (req.url === '/') {
+        const index = fs.readFileSync(path.join(__dirname, 'index.html'));
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(index);
+    } else {
+        res.writeHead(404);
+        res.end('Not found');
+    }
 });
-const wss = new WebSocketServer({ 
+
+const wss = new WebSocketServer({
     server,
     path: '/chat'
 });
 
-
-
-// Store connected clients
-const clients = new Set();
+// ####################################################################################################
 
 wss.on('connection', (ws, request) => {
-    const clientIP = request.socket.remoteAddress;
-    clients.add(ws);
+    ws.username = null;
 
-    // Extract client IP (useful for identification)
-    console.log('New client connected');
-    console.log(`user-${clients.size.toString().padStart(3, '0')}`);
+    ws.on('message', (msg) => {
+        const data = JSON.parse(msg);
+        const users = loadUsers();
 
-    ws.send(JSON.stringify({
-        'type': 'define',
-        'user': `user-${clients.size.toString().padStart(3, '0')}`,
-        'timestamp': new Date().toISOString()
-    }))
+        switch (data.type) {
+            case 'signup':
+                if (users[data.username]) {
+                    ws.send(JSON.stringify({
+                        type: 'error',
+                        message: 'User exists' 
+                    }));
+                    return;
+                }
 
-    ws.on('message', (data) => {
-        const msg = JSON.parse(data);
-        // console.log(msg);
+                users[data.username] = { password: hash(data.password) };
+                saveUsers(users);
 
-        if (msg['type'] == `message`) {
-            console.log(`${msg.user}: ${msg.message}`)
-            broadcast(msg, ws);
+                ws.username = data.username;
+                ws.send(JSON.stringify({
+                    type: 'auth',
+                    success: true,
+                    username: data.username
+                }));
+                console.log(`user joined: ${ws.username}`);
+                break;
+
+            case 'login':
+                if (ws.username !== null) {
+                    ws.send(JSON.stringify({
+                        type: 'error',
+                        message: 'Already logged in'
+                    }));
+                    return;
+                }
+
+                else if (!users[data.username] || users[data.username].password !== hash(data.password)) {
+                    ws.send(JSON.stringify({
+                        type: 'error',
+                        message: 'Invalid creds'
+                    }));
+                    return;
+                }
+                /*
+                else {
+                    const tmp = false
+                    const client_size = wss.clients.size();
+                    for (let i = 0; i < client_size; i++) {
+                        if (wss.clients[i].username === ws.username) {
+                            return;
+                        }
+                    } 
+                }
+                */
+
+                ws.username = data.username;
+                ws.send(JSON.stringify({
+                    type: 'auth',
+                    success: true,
+                    username: data.username
+                }));
+                console.log(`user joined: ${ws.username}`);
+                break;
+
+            case 'logout':
+                console.log(`user left: ${data.username}`);
+                ws.username = null;
+                ws.send(JSON.stringify({ type: 'auth', success: false }));
+                break;
+
+            case 'message':
+                if (!ws.username) return;
+                console.log(`${ws.username}: ${data.message}`);
+                const payload = JSON.stringify({
+                    type: 'message',
+                    user: ws.username,
+                    message: data.message
+                });
+                wss.clients.forEach(c => c.username != ws.username ? c.send(payload) : null);
+                break;
         }
-
     });
-
-    /*
-    // Extract client IP (useful for identification)
-    const clientIP = request.socket.remoteAddress;
-    console.log(`Client connected from: ${clientIP}`);
-
-    // Send welcome message
-    ws.send(JSON.stringify({
-        type: 'welcome',
-        message: 'Connected to WebSocket server!',
-        timestamp: new Date().toISOString()
-    }));
-
-    // Broadcast to all clients that someone joined
-
-
-    // Handle messages from client
-    ws.on('message', (data) => {
-        try {
-            const message = data.toString();
-            console.log(`Received: ${message}`);
-
-            // Parse if it's JSON, otherwise treat as text
-            let parsedMessage;
-            try {
-                parsedMessage = JSON.parse(message);
-            } catch {
-                parsedMessage = { type: 'message', content: message };
-            }
-
-            // Broadcast to all clients except sender
-            broadcast({
-                type: 'broadcast',
-                from: clientIP,
-                content: parsedMessage.content || parsedMessage,
-                timestamp: new Date().toISOString()
-            }, ws);
-
-        } catch (error) {
-            console.error('Error processing message:', error);
-        }
-    });
-
-    // Handle client disconnection
-    ws.on('close', () => {
-        console.log('Client disconnected');
-        clients.delete(ws);
-
-        // Broadcast that user left
-        broadcast({
-            type: 'user_left',
-            message: `User left (${clientIP})`,
-            timestamp: new Date().toISOString()
-        });
-    });
-
-    // Handle errors
-    ws.on('error', (error) => {
-        console.error('WebSocket error:', error);
-        clients.delete(ws);
-    });
-    */
 });
 
-// Broadcast message to all connected clients
-function broadcast(message, excludeClient = null) {
-    const messageStr = JSON.stringify(message);
-    clients.forEach(client => {
-        if (client !== excludeClient && client.readyState === WebSocket.OPEN) {
-            client.send(messageStr);
-        }
-    });
+// Utility: load users
+function loadUsers() {
+    try {
+        return JSON.parse(fs.readFileSync(usersFile, 'utf-8'));
+    } catch (e) {
+        return {};
+    }
 }
+
+// Utility: save users
+function saveUsers(users) {
+    fs.writeFileSync(usersFile, JSON.stringify(users, null, 2));
+}
+
+// Hash password
+function hash(str, seed = 1) {
+    let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
+    for (let i = 0, ch; i < str.length; i++) {
+        ch = str.charCodeAt(i);
+        h1 = Math.imul(h1 ^ ch, 2654435761);
+        h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+    h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+    h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+
+    return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+}
+
+// ####################################################################################################
 
 // Start server
 server.listen(PORT, () => {
     console.log(`WebSocket server running on port ${PORT}`);
     console.log(`You can test with: ws://0.0.0.0:${PORT}/chat`);
     console.log(`You can connet to: http://0.0.0.0:${PORT}`);
-});
-
-// Graceful shutdown
-process.on('SIGINT', () => {
-    console.log('Shutting down server...');
-    broadcast({
-        type: 'server_shutdown',
-        message: 'Server is shutting down',
-        timestamp: new Date().toISOString()
-    });
-
-    wss.close(() => {
-        console.log('WebSocket server closed');
-        process.exit(0);
-    });
 });
